@@ -31,3 +31,10 @@ def calc_macd(df, fast=12, slow=26, signal=9):
     df['Signal'] = df['MACD'].ewm(span=signal, adjust=False).mean()
     df['Histogram'] = df['MACD'] - df['Signal']
     return df
+
+def calc_stochastic(df, period=14, smooth_k=3, smooth_d=3):
+    low_min = df['Low'].rolling(window=period).min()
+    high_max = df['High'].rolling(window=period).max()
+    df['%K'] = 100 * (df['Close'] - low_min) / (high_max - low_min)
+    df['%D'] = df['%K'].rolling(window=smooth_d).mean()  # Smooth %K to get %D
+    return df

@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import pandas as pd
 from src.calc_indicators import calc_sma_ema, calc_rsi, calc_bollinger_bands, calc_macd
 
 def plot_sma_ema_with_rsi(df, ticker, sma_ema_periods=[20, 50, 200], rsi_period=14, start_plot_date=None):
@@ -198,3 +199,117 @@ def plot_full_chart(df, ticker,
     indicators.append(f"MACD: fast={macd_fast}, slow={macd_slow}, signal={macd_signal}")
     
     print(f"Plotted {ticker.upper()} with indicators: {', '.join(indicators)}")
+
+def plot_volume(df, ticker, period=20, start_plot_date=None):
+    plot_df = df.copy()
+    
+    # Flatten MultiIndex columns
+    if isinstance(plot_df.columns, pd.MultiIndex):
+        plot_df.columns = [col[0] for col in plot_df.columns]
+
+    # Volume MA
+    if 'Vol_MA' not in plot_df.columns:
+        plot_df['Vol_MA'] = plot_df['Volume'].rolling(window=period).mean()
+
+    # Filter by start_plot_date
+    if start_plot_date:
+        start_plot_date = pd.to_datetime(start_plot_date)
+        plot_df = plot_df[plot_df.index >= start_plot_date]
+
+    if plot_df.empty:
+        print(f"No data to plot for {ticker} after {start_plot_date}")
+        return
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(14, 3))
+    ax.bar(plot_df.index, plot_df['Volume'], label='Volume', color='green', alpha=0.5)
+    ax.plot(plot_df.index, plot_df['Vol_MA'], label=f'Volume MA ({period})', color='red', linewidth=2)
+    ax.set_title(f"{ticker.upper()} — Volume with Moving Average")
+    ax.set_ylabel("Volume")
+    ax.grid(True, linestyle='--', alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+    plt.show()
+
+def plot_stochastic(df, ticker, period=14, smooth_k=3, smooth_d=3, start_plot_date=None):
+    from src.calc_indicators import calc_stochastic  # Importeer calc_stochastic
+    
+    plot_df = df.copy()
+    
+    # Flatten MultiIndex columns
+    if isinstance(plot_df.columns, pd.MultiIndex):
+        plot_df.columns = [col[0] for col in plot_df.columns]
+
+    # Calculate Stochastic if not present
+    if not {'%K', '%D'}.issubset(plot_df.columns):
+        plot_df = calc_stochastic(plot_df, period, smooth_k, smooth_d)
+
+    # Filter by start_plot_date
+    if start_plot_date:
+        start_plot_date = pd.to_datetime(start_plot_date)
+        plot_df = plot_df[plot_df.index >= start_plot_date]
+
+    if plot_df.empty:
+        print(f"No data to plot for {ticker} after {start_plot_date}")
+        return
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(14, 3))
+    ax.plot(plot_df.index, plot_df['%K'], label=f'%K ({period})', color='blue')
+    ax.plot(plot_df.index, plot_df['%D'], label=f'%D ({smooth_d})', color='orange')
+    ax.axhline(80, color='red', linestyle='--')
+    ax.axhline(20, color='green', linestyle='--')
+    ax.fill_between(plot_df.index, 20, 80, color='gray', alpha=0.1)
+    ax.set_title(f"{ticker.upper()} — Stochastic Oscillator")
+    ax.set_ylabel("Stochastic")
+    ax.set_ylim(0, 100)
+    ax.grid(True, linestyle='--', alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+    plt.show()
+
+def plot_fibonacci_levels(df, ticker, low_price=None, high_price=None, start_plot_date=None, auto_detect=False, lookback_period=60):
+    plot_df = df.copy()
+    
+    # Flatten MultiIndex columns
+    if isinstance(plot_df.columns, pd.MultiIndex):
+        plot_df.columns = [col[0] for col in plot_df.columns]
+
+    # Filter by start_plot_date
+    if start_plot_date:
+        start_plot_date = pd.to_datetime(start_plot_date)
+        plot_df = plot_df[plot_df.index >= start_plot_date]
+
+    if plot_df.empty:
+        print(f"No data to plot for {ticker} after {start_plot_date}")
+        return
+
+    # Automatische detectie van low en high als niet handmatig gespecificeerd
+    if auto_detect and (low_price is None or high_price is None):
+        lookback_df = plot_df.tail(lookback_period)  # Laatste 60 dagen
+        low_price = lookback_df['Close'].min()
+        high_price = lookback_df['Close'].max()
+
+    # Gebruik handmatige waarden als opgegeven
+    if low_price is None or high_price is None:
+        print("Please specify low_price and high_price or set auto_detect=True with a lookback_period.")
+        return
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(14, 4))
+    ax.plot(plot_df.index, plot_df['Close'], label='Close', color='blue')
+
+    # Calculate Fibonacci levels
+    price_range = high_price - low_price
+    levels = [0, 23.6, 38.2, 50, 61.8, 100]
+    for level in levels:
+        price = high_price - (price_range * level / 100)
+        ax.axhline(y=price, color='gray', linestyle='--', alpha=0.5)
+        ax.text(plot_df.index[0], price, f'{level}%', va='center', ha='right', alpha=0.7)
+
+    ax.set_title(f"{ticker.upper()} — Fibonacci Levels (Low: {low_price}, High: {high_price})")
+    ax.set_ylabel("Price")
+    ax.grid(True, linestyle='--', alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+    plt.show()
