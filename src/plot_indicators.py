@@ -50,7 +50,6 @@ def plot_sma_ema_with_rsi(df, ticker, sma_ema_periods=[20, 50, 200], rsi_period=
 
     plt.tight_layout()
     plt.show()
-    
 
 def plot_bollinger_bands(df, ticker, period=20, std_dev=2, start_plot_date=None):
     plot_df = df.copy()
@@ -90,7 +89,6 @@ def plot_rsi(df, ticker, period=14, start_plot_date=None):
     plt.grid(True, linestyle='--', alpha=0.3)
     plt.legend()
     plt.show()
-
 
 def plot_macd(df, ticker, fast=12, slow=26, signal=9, start_plot_date=None):
     plot_df = df.copy()
@@ -311,5 +309,166 @@ def plot_fibonacci_levels(df, ticker, low_price=None, high_price=None, start_plo
     ax.set_ylabel("Price")
     ax.grid(True, linestyle='--', alpha=0.3)
     ax.legend()
+    plt.tight_layout()
+    plt.show()
+
+def plot_monthly_candles(
+    df,
+    ticker,
+    sma_ema_period=20,
+    use_sma=False,
+    use_ema=True,
+    show_bollinger=True,
+    bb_period=20,
+    bb_std=2,
+    start_plot_date=None,
+):
+    """
+    Monthly candlesticks + EMA + Bollinger Bands + daily close line.
+    Visual style matches the ProRealTime screenshot you posted.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.dates import DateFormatter, MonthLocator
+    from matplotlib.ticker import MaxNLocator
+
+    plot_df = df.copy()
+
+    # ----- 1. Clean yfinance MultiIndex ---------------------------------
+    if isinstance(plot_df.columns, pd.MultiIndex):
+        if ticker in plot_df.columns.get_level_values(1):
+            plot_df = plot_df.xs(ticker, level=1, axis=1)
+        else:
+            plot_df.columns = [col[0] for col in plot_df.columns]
+    plot_df.columns = [c.capitalize() for c in plot_df.columns]
+
+    # ----- 2. Optional start-date filter --------------------------------
+    if start_plot_date:
+        start_plot_date = pd.to_datetime(start_plot_date)
+        plot_df = plot_df[plot_df.index >= start_plot_date]
+
+    if plot_df.empty:
+        print(f"No data for {ticker} after {start_plot_date}")
+        return
+
+    # ----- 3. Indicators (calculated on **daily** data) -----------------
+    if use_sma or use_ema:
+        plot_df = calc_sma_ema(plot_df, [sma_ema_period])
+    if show_bollinger:
+        plot_df = calc_bollinger_bands(plot_df, period=bb_period, std_dev=bb_std)
+
+    # ----- 4. Resample to **monthly** candles ---------------------------
+    agg = {
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+    }
+    for col in [f"SMA{sma_ema_period}", f"EMA{sma_ema_period}",
+                "BB_Upper", "BB_Middle", "BB_Lower"]:
+        if col in plot_df.columns:
+            agg[col] = "last"
+
+    monthly = plot_df.resample("ME").agg(agg).dropna(how="any")
+
+    # ----- 5. Plot -------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(13, 7))
+
+    # ---- candlestick colours (green = up, red = down) -----------------
+    candle_up   = "#00FF00"   # lime-green
+    candle_down = "#FF0000"   # red
+    colors = monthly.apply(
+        lambda r: candle_up if r["Close"] >= r["Open"] else candle_down, axis=1
+    )
+
+    # ---- draw monthly candles -----------------------------------------
+    for i, (date, row) in enumerate(monthly.iterrows()):
+        col = colors.iloc[i]
+
+        # wicks
+        ax.plot([date, date], [row["Low"], row["High"]], color=col, linewidth=1.2)
+
+        # body – thick, rounded caps (ProRealTime look)
+        ax.plot(
+            [date, date],
+            [row["Open"], row["Close"]],
+            color=col,
+            linewidth=7,
+            solid_capstyle="round",
+        )
+
+    # ---- DAILY CLOSE LINE (always blue) -------------------------------
+    ax.plot(
+        plot_df.index,
+        plot_df["Close"],
+        color="#1f77b4",          # matplotlib default blue
+        linewidth=1.6,
+        label="Daily Close",
+        zorder=5,
+    )
+
+    # ---- EMA 20 (crimson red) -----------------------------------------
+    if use_ema and f"EMA{sma_ema_period}" in monthly.columns:
+        ax.plot(
+            monthly.index,
+            monthly[f"EMA{sma_ema_period}"],
+            color="#DC143C",          # crimson
+            linewidth=2.5,
+            label=f"EMA {sma_ema_period}",
+        )
+
+    # ---- Bollinger Bands (purple band) --------------------------------
+    if show_bollinger and all(c in monthly.columns for c in ["BB_Upper", "BB_Middle", "BB_Lower"]):
+        ax.plot(
+            monthly.index,
+            monthly["BB_Middle"],
+            color="#9467bd",          # medium purple
+            linewidth=1.8,
+            linestyle="--",
+        )
+        ax.fill_between(
+            monthly.index,
+            monthly["BB_Upper"],
+            monthly["BB_Lower"],
+            color="#9467bd",
+            alpha=0.25,
+            label="Bollinger (20,2)",
+        )
+
+    # ---- Styling (exactly like the screenshot) -----------------------
+    ax.set_title(
+        f"{ticker.upper()} — Monthly Candles + EMA + Bollinger Bands",
+        fontsize=14,
+        fontweight="bold",
+        pad=15,
+    )
+    ax.set_ylabel("Price", fontsize=12)
+
+    # grid
+    ax.grid(True, which="major", linestyle="--", linewidth=0.6, alpha=0.4)
+
+    # legend – top-left, same order as ProRealTime
+    legend_elements = []
+    if use_ema:
+        legend_elements.append(
+            plt.Line2D([0], [0], color="#DC143C", lw=2.5, label=f"EMA {sma_ema_period}")
+        )
+    if show_bollinger:
+        legend_elements.append(
+            plt.Line2D([0], [0], color="#9467bd", lw=1.8, ls="--", label="Bollinger (20,2)")
+        )
+    legend_elements.append(
+        plt.Line2D([0], [0], color="#1f77b4", lw=1.6, label="Daily Close")
+    )
+    ax.legend(handles=legend_elements, loc="upper left", fontsize=10, frameon=True, fancybox=True, shadow=True)
+
+    # X-axis: 3-month major ticks, year-month format
+    ax.xaxis.set_major_locator(MonthLocator(interval=3))
+    ax.xaxis.set_major_formatter(DateFormatter("%Y-%m"))
+    ax.xaxis.set_minor_locator(MonthLocator())
+    fig.autofmt_xdate(rotation=0, ha="center")
+
+    # Y-axis: automatic but not too many ticks
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=10))
+
     plt.tight_layout()
     plt.show()
