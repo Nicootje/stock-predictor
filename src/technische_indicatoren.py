@@ -1,6 +1,6 @@
-def technische_indicatoren(df, periods, bb_period=20, bb_std_dev=2):
+def technische_indicatoren(df, periods, ticker=None, bb_period=20, bb_std_dev=2):
     """
-    Print de laatste waarden van SMA, EMA en Bollinger Bands uit een DataFrame.
+    Bereken en toon de laatste waarden van prijs, SMA, EMA en Bollinger Bands als nette tabel.
     """
     df = df.copy()
 
@@ -15,14 +15,24 @@ def technische_indicatoren(df, periods, bb_period=20, bb_std_dev=2):
     df['BB_Upper'] = df['BB_Middle'] + (df['BB_Std'] * bb_std_dev)
     df['BB_Lower'] = df['BB_Middle'] - (df['BB_Std'] * bb_std_dev)
 
-    # === Waarden printen ===
-    laatste_datum = df.index[-1].strftime('%Y-%m-%d') if hasattr(df.index[-1], 'strftime') else df.index[-1]
-    print(f"Laatste waarden voor alle indicatoren (datum: {laatste_datum}):")
+    # === Laatste rij en datum ===
+    laatste_rij = df.iloc[[-1]]
+    laatste_datum = laatste_rij.index[-1].strftime('%Y-%m-%d')
 
-    for p in periods:
-        print(f"- SMA{p}: {df[f'SMA{p}'].iloc[-1]:.2f}")
-        print(f"- EMA{p}: {df[f'EMA{p}'].iloc[-1]:.2f}")
+    # === Kolommen selecteren ===
+    kolommen = (
+        ['Close']
+        + [f'SMA{p}' for p in periods]
+        + [f'EMA{p}' for p in periods]
+        + ['BB_Upper', 'BB_Middle', 'BB_Lower']
+    )
 
-    print(f"- BB_Upper: {df['BB_Upper'].iloc[-1]:.2f}")
-    print(f"- BB_Middle: {df['BB_Middle'].iloc[-1]:.2f}")
-    print(f"- BB_Lower: {df['BB_Lower'].iloc[-1]:.2f}")
+    tabel = laatste_rij[kolommen].T
+    kolomnaam = ticker.upper() if ticker else "Value"
+    tabel.columns = [kolomnaam]
+    tabel.index.name = f"Indicatoren ({laatste_datum})"
+
+    # === Afronden op 3 decimalen en tonen ===
+    tabel = tabel.round(3)
+
+    return tabel
