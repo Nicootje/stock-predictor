@@ -8,6 +8,7 @@ import pandas as pd
 
 from src.divergence import plot_rsi_divergence
 from src.divergence_scanner import scan_rsi_divergence
+from src.calc_indicators import calc_rsi
 
 
 def frame(values):
@@ -28,12 +29,15 @@ class DivergenceScannerTests(unittest.TestCase):
             with patch('yfinance.download', side_effect=AssertionError('No download')):
                 result = scan_rsi_divergence(['UP','DOWN'], rsi_period=14,
                     data_by_ticker={'UP':bullish,'DOWN':bearish}, show=False).set_index('ticker')
-            self.assertEqual(result.loc['UP',term], 'Bullish')
-            self.assertEqual(result.loc['DOWN',term], 'Bearish')
+            # A long, gradual move can leave less than 5 RSI points of contrast.
+            clear = calc_rsi(bullish.copy()).RSI.iloc[-1] - calc_rsi(bullish.copy()).RSI.iloc[20] >= 5
+            self.assertEqual(result.loc['UP',term], 'Bullish' if clear else '-')
+            self.assertEqual(result.loc['DOWN',term], 'Bearish' if clear else '-')
             self.assertFalse(plt.get_fignums())
             for name, data in [('UP',bullish), ('DOWN',bearish)]:
                 plot = plot_rsi_divergence(data, name, trend=term, show=False)
-                self.assertEqual(result.loc[name,term], plot['current_divergences'].iloc[0].direction.capitalize())
+                signals = plot['current_divergences']
+                self.assertEqual(result.loc[name,term], signals.iloc[0].direction.capitalize() if len(signals) else '-')
                 self.assertEqual(result.loc[name,'as_of'], data.index[-1])
                 plt.close(plot['figure'])
 
