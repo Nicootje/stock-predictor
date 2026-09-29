@@ -13,13 +13,13 @@ from src.calc_indicators import calc_rsi
 
 
 _PRESETS = {
-    "short": dict(window=126, order=2, min_distance=3, max_distance=30),
-    "medium": dict(window=252, order=5, min_distance=10, max_distance=90),
-    "long": dict(window=756, order=10, min_distance=20, max_distance=180),
+    "short": dict(order=2, min_distance=5, max_distance=21),
+    "medium": dict(order=5, min_distance=21, max_distance=63),
+    "long": dict(order=10, min_distance=63, max_distance=126),
 }
 _COLUMNS = ["direction", "first_pivot", "second_pivot", "confirmed_on",
             "first_price", "second_price", "first_rsi", "second_rsi",
-            "price_change_pct", "rsi_change", "age_bars"]
+            "price_change_pct", "rsi_change", "span_bars", "age_bars", "status", "detected_on"]
 
 
 def _close_data(df, ticker):
@@ -64,13 +64,52 @@ def _pivots(values, order, low):
     return np.flatnonzero(extreme) + order
 
 
-def plot_rsi_divergence(df, ticker, trend="medium", rsi_period=14,
-                        start_plot_date=None, *, last_bar_complete=False, show=True):
-    """Plot regular bullish/bearish divergence between consecutive Close pivots.
+def _current_divergences(latest, data, settings):
+    """Gedeelde voorlopige detectie voor de grafiek en de watchlistscanner."""
+    close, rsi = data.Close.to_numpy(), data.RSI.to_numpy()
+    order = settings["order"]
+    current_events = []
+    b = len(latest) - 1
+    for low, direction in ((True, "bullish"), (False, "bearish")):
+        if b < order or not np.isfinite(latest.RSI.iloc[b]):
+            continue
+        price, current_rsi = latest.Close.iloc[b], latest.RSI.iloc[b]
+        previous = latest.Close.iloc[b-order:b]
+        extreme = price < previous.min() if low else price > previous.max()
+        if not extreme:
+            continue
+        pivots = _pivots(close, order, low)
+        eligible = pivots[(b - pivots >= settings["min_distance"]) &
+                          (b - pivots <= settings["max_distance"])]
+        if not len(eligible):
+            continue
+        a = eligible[-1]
+        if not np.isfinite(rsi[a]):
+            continue
+        match = (price < close[a] and current_rsi > rsi[a]) if low else (
+            price > close[a] and current_rsi < rsi[a])
+        if match:
+            current_events.append(dict(direction=direction, first_pivot=data.index[a],
+                second_pivot=latest.index[b], confirmed_on=pd.NaT,
+                first_price=close[a], second_price=price, first_rsi=rsi[a], second_rsi=current_rsi,
+                price_change_pct=(price / close[a] - 1) * 100, rsi_change=current_rsi-rsi[a],
+                span_bars=int(b-a), age_bars=0, status="PRELIMINARY", detected_on=latest.index[b]))
+    return pd.DataFrame(current_events, columns=_COLUMNS)
 
-    short: 126 visible bars, 2 confirmation bars, pivots 3–30 bars apart.
-    medium: 252 visible bars, 5 confirmation bars, pivots 10–90 bars apart.
-    long: 756 visible bars, 10 confirmation bars, pivots 20–180 bars apart.
+
+def plot_rsi_divergence(df, ticker, trend="medium", rsi_period=14,
+                        start_plot_date=None, *, last_bar_complete=False, show=True,
+                        include_current=True):
+    """Plot regular bullish/bearish divergence at the selected swing scale.
+
+    short: pivots 5–21 bars apart (about 1–4 weeks), 2 confirmation bars.
+    medium: pivots 21–63 bars apart (about 1–3 months), 5 confirmation bars.
+    long: pivots 63–126 bars apart (about 3–6 months), 10 confirmation bars.
+    These calendar approximations assume daily exchange sessions.
+    Each pivot is compared with the most recent earlier pivot of the same
+    type INSIDE the distance range. Closer pivots are skipped; we do not pick
+    an older pair just because it yields a divergence. span_bars reports the
+    actual distance. The same rule is evaluated throughout the plot period.
 
     Trend selects swing scale, not long/short trade direction. These settings
     are exploratory, not calibrated predictors. RSI uses calc_rsi unchanged;
@@ -79,10 +118,20 @@ def plot_rsi_divergence(df, ticker, trend="medium", rsi_period=14,
     a bearish event has a higher Close high and lower RSI at that SAME pivot.
     Flat/tied extrema are not pivots. An event exists only order bars later.
 
-    The last supplied bar is excluded unless last_bar_complete=True. Compute
-    RSI and events on full history BEFORE limiting the chart to the preset's
-    window and optional start_plot_date. Only fully visible pairs are drawn.
-    Returns figure, divergences (chart IDs), all_divergences and settings.
+    include_current=True also compares the latest supplied price/RSI with an
+    earlier confirmed pivot, without waiting for future bars. The latest price
+    must be a strict extremum relative to the preceding order bars. This is a
+    PRELIMINARY snapshot, not a confirmed turning point; it may disappear on
+    the next update. No quote is downloaded: freshness depends on supplied df.
+    last_bar_complete=False excludes the latest bar from CONFIRMED detection,
+    but still includes it in the preliminary snapshot and chart. Set
+    include_current=False for the previous confirmed-only behaviour. Compute
+    RSI and events on full history BEFORE applying start_plot_date, which is
+    the sole display cutoff in EVERY mode. None shows all available history.
+    Only fully visible pairs are drawn; a wider plot may be needed for long
+    divergences. Changing the plot start never changes computed indicators.
+    Returns figure, divergences (chart IDs), all_divergences (confirmed history),
+    current_divergences (latest snapshot, even outside the display) and settings.
     """
     if trend not in _PRESETS:
         raise ValueError("trend moet 'short', 'medium' of 'long' zijn.")
@@ -90,22 +139,27 @@ def plot_rsi_divergence(df, ticker, trend="medium", rsi_period=14,
         raise ValueError("rsi_period moet een geheel getal van minstens 2 zijn.")
     if not isinstance(last_bar_complete, bool):
         raise ValueError("last_bar_complete moet True of False zijn.")
+    if not isinstance(include_current, bool):
+        raise ValueError("include_current moet True of False zijn.")
     settings = _PRESETS[trend].copy()
-    data = _close_data(df, ticker)
+    latest = calc_rsi(_close_data(df, ticker), rsi_period)
+    data = latest
     if not last_bar_complete:
         data = data.iloc[:-1].copy()
     if data.empty:
         raise ValueError("Geen candles beschikbaar voor divergentieanalyse.")
-    data = calc_rsi(data, rsi_period)
-    data.loc[data.index[:rsi_period], "RSI"] = np.nan
     close, rsi = data.Close.to_numpy(), data.RSI.to_numpy()
     events = []
     order = settings["order"]
     for low, direction in ((True, "bullish"), (False, "bearish")):
         pivots = _pivots(close, order, low)
-        for a, b in zip(pivots, pivots[1:]):
-            if not settings["min_distance"] <= b - a <= settings["max_distance"]:
+        for i, b in enumerate(pivots):
+            earlier = pivots[:i]
+            eligible = earlier[(b - earlier >= settings["min_distance"]) &
+                               (b - earlier <= settings["max_distance"])]
+            if not len(eligible):
                 continue
+            a = eligible[-1]
             if not np.isfinite([rsi[a], rsi[b]]).all():
                 continue
             match = (close[b] < close[a] and rsi[b] > rsi[a]) if low else (
@@ -115,10 +169,15 @@ def plot_rsi_divergence(df, ticker, trend="medium", rsi_period=14,
                     second_pivot=data.index[b], confirmed_on=data.index[b + order],
                     first_price=close[a], second_price=close[b], first_rsi=rsi[a], second_rsi=rsi[b],
                     price_change_pct=(close[b] / close[a] - 1) * 100,
-                    rsi_change=rsi[b] - rsi[a], age_bars=len(data) - 1 - (b + order)))
+                    rsi_change=rsi[b] - rsi[a], span_bars=int(b - a),
+                    age_bars=len(data) - 1 - (b + order), status="CONFIRMED",
+                    detected_on=data.index[b + order]))
     all_events = pd.DataFrame(events, columns=_COLUMNS).sort_values(
         ["confirmed_on", "direction"], kind="stable").reset_index(drop=True)
-    visible = data.tail(settings["window"])
+    current = (_current_divergences(latest, data, settings) if include_current
+               else pd.DataFrame(columns=_COLUMNS))
+    current_events = current.to_dict('records')
+    visible = latest if include_current else data
     if start_plot_date is not None:
         start = pd.Timestamp(start_plot_date)
         if pd.isna(start):
@@ -128,7 +187,9 @@ def plot_rsi_divergence(df, ticker, trend="medium", rsi_period=14,
         visible = visible.loc[visible.index >= start]
     if visible.empty:
         raise ValueError("Geen candles binnen de gekozen plotperiode.")
-    plotted = all_events.loc[all_events.first_pivot >= visible.index[0]].copy().reset_index(drop=True)
+    combined = pd.DataFrame(events + current_events, columns=_COLUMNS).sort_values(
+        ["detected_on", "direction"], kind="stable")
+    plotted = combined.loc[combined.first_pivot >= visible.index[0]].copy().reset_index(drop=True)
     plotted.insert(0, "id", np.arange(1, len(plotted) + 1))
 
     fig, (price_ax, rsi_ax) = plt.subplots(2, 1, figsize=(14, 8), sharex=True,
@@ -140,25 +201,37 @@ def plot_rsi_divergence(df, ticker, trend="medium", rsi_period=14,
     seen = set()
     for event in plotted.itertuples():
         bull = event.direction == "bullish"
+        preliminary = event.status == "PRELIMINARY"
         color, marker, style = ("#0072B2", "^", "-") if bull else ("#D55E00", "v", "--")
-        label = ("Bullish (B)" if bull else "Bearish (S)") if event.direction not in seen else None
-        seen.add(event.direction)
+        if preliminary:
+            marker, style = "D", ":"
+        key = (event.direction, event.status)
+        label = (("Voorlopig " if preliminary else "Bevestigd ") + event.direction) if key not in seen else None
+        seen.add(key)
         dates = [event.first_pivot, event.second_pivot]
         price_ax.plot(dates, [event.first_price, event.second_price], color=color, linestyle=style, marker="o", linewidth=2)
         rsi_ax.plot(dates, [event.first_rsi, event.second_rsi], color=color, linestyle=style, marker="o", linewidth=2)
-        price = data.loc[event.confirmed_on, "Close"]
-        price_ax.scatter(event.confirmed_on, price, color=color, marker=marker, s=65, label=label, zorder=5)
-        price_ax.annotate(f"{'B' if bull else 'S'}{event.id}", (event.confirmed_on, price),
+        date = event.detected_on
+        price = latest.loc[date, "Close"]
+        price_ax.scatter(date, price, edgecolors=color, facecolors="none" if preliminary else color,
+                         marker=marker, s=85 if preliminary else 65, label=label, zorder=5)
+        price_ax.annotate(f"{'P' if preliminary else ''}{'B' if bull else 'S'}{event.id}", (date, price),
                           xytext=(4, 8), textcoords="offset points", fontsize=9)
         for ax in (price_ax, rsi_ax):
-            ax.axvline(event.confirmed_on, color="gray", linestyle=":", alpha=.35)
-    price_ax.set(title=f"{ticker.upper()} — RSI-divergentie | {trend} | {data.index[-1]:%Y-%m-%d}",
+            ax.axvline(date, color="gray", linestyle=":", alpha=.35)
+    price_ax.set(title=f"{ticker.upper()} — RSI-divergentie | {trend} | {visible.index[-1]:%Y-%m-%d}",
                  ylabel="Koers (noteringsvaluta)")
-    info = f"Bevestiging na {order} candles. B / omhoog: bullish; S / omlaag: bearish."
-    if plotted.empty:
+    info = (f"Draaipunten {settings['min_distance']}–{settings['max_distance']} candles uit elkaar; "
+            f"bevestiging na {order} candles.\nB / omhoog: bullish; S / omlaag: bearish.")
+    if include_current:
+        info += ("\nLaatste koers: voorlopige divergentie (open ruit, P); kan verdwijnen." if len(current)
+                 else "\nLaatste koers: geen voorlopige divergentie volgens deze instellingen.")
+        if len(current) and not plotted.status.eq("PRELIMINARY").any():
+            info += " Anker vóór plotstart; zie current_divergences."
+    elif plotted.empty:
         info += "\nGeen bevestigde divergenties in dit venster."
     if not last_bar_complete:
-        info += "\nLaatste aangeleverde candle uitgesloten."
+        info += "\nLaatste aangeleverde candle uitgesloten van bevestigde detectie."
     price_ax.text(.01, .01, info, transform=price_ax.transAxes, fontsize=8,
                   bbox=dict(facecolor="white", alpha=.85, edgecolor="none"))
     rsi_ax.set(ylabel="RSI", ylim=(0, 100))
@@ -168,5 +241,8 @@ def plot_rsi_divergence(df, ticker, trend="medium", rsi_period=14,
     if show:
         plt.show()
     return dict(figure=fig, divergences=plotted, all_divergences=all_events,
+                current_divergences=current,
                 settings=dict(trend=trend, rsi_period=rsi_period, **settings,
-                              last_bar_complete=last_bar_complete, as_of=data.index[-1]))
+                              start_plot_date=start_plot_date,
+                              last_bar_complete=last_bar_complete, include_current=include_current,
+                              as_of=visible.index[-1]))
