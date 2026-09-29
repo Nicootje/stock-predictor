@@ -131,6 +131,13 @@ class IndicatorTests(unittest.TestCase):
         _,recent = assess_trend_with_regime(frame.copy(),str(frame.index[-2].date()))
         pd.testing.assert_series_equal(full.iloc[-1],recent.iloc[-1])
 
+    def test_monthly_plot_without_valid_candles(self):
+        frame = prices([100.] * 40)
+        frame.loc[:, ['Open', 'High', 'Low', 'Close']] = np.nan
+        with patch('matplotlib.pyplot.show') as show:
+            plot_monthly_candles(frame, 'TEST')
+        show.assert_not_called()
+
     def test_scanner_divergence_uses_confirmed_chronological_pivots(self):
         values = np.array([12,11,10,9,10,11,12,13,12,11,10,8,10,11])
         for close, direction in [(values,0),(30-values,1)]:

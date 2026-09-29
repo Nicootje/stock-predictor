@@ -122,7 +122,7 @@ def plot_full_chart(df, ticker,
     # --- Create figure with 3 subplots ---
     fig, (ax_price, ax_rsi, ax_macd) = plt.subplots(
         3, 1, figsize=(14, 10), sharex=True,
-        gridspec_kw={'height_ratios': [3, 1, 1], 'hspace': 0.03}
+        layout='constrained', gridspec_kw={'height_ratios': [3, 1, 1]}
     )
 
     # --- Price + SMA/EMA + Bollinger ---
@@ -163,7 +163,6 @@ def plot_full_chart(df, ticker,
     ax_macd.grid(True, linestyle='--', alpha=0.3)
     ax_macd.legend()
 
-    plt.tight_layout()
     plt.show()
 
     # --- Print info about which indicators are plotted ---
@@ -295,6 +294,9 @@ def plot_monthly_candles(
             agg[col] = "last"
 
     monthly = plot_df.resample("ME").agg(agg).dropna(subset=['Open', 'High', 'Low', 'Close'])
+    if monthly.empty:
+        print(f"No valid monthly candles for {ticker}")
+        return
     # Plaats de mogelijk onvoltooide laatste maand op de laatste waarneming.
     monthly = monthly.rename(index={monthly.index[-1]: plot_df.index[-1]})
     if start_plot_date:

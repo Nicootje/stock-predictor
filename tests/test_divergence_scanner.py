@@ -43,7 +43,11 @@ class DivergenceScannerTests(unittest.TestCase):
             result = scan_rsi_divergence(['UP','FLAT','MISSING','SHORT'],data_by_ticker={
                 'UP':frame(values),'FLAT':frame([100.]*200),'SHORT':frame([100.]*5)})
         self.assertEqual(len(result),4)
-        self.assertEqual(display.call_args_list[1].args[0].ticker.tolist(),['UP'])
+        tables = [call.args[0] for call in display.call_args_list
+                  if isinstance(call.args[0], pd.DataFrame)]
+        self.assertEqual(tables[0].ticker.tolist(), ['UP'])
+        self.assertEqual(set(tables[1].ticker), {'UP', 'MISSING', 'SHORT'})
+        self.assertFalse(tables[1].status.eq('OK').any())
         self.assertEqual(result.set_index('ticker').loc['MISSING','status'],'ERROR')
         self.assertEqual(result.set_index('ticker').loc['SHORT','short'],'ONVOLDOENDE DATA')
 
