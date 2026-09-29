@@ -2,8 +2,13 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 from typing import Dict, Any, List, Tuple
-from tqdm import tqdm
-from src.calc_indicators import calc_sma_ema, calc_rsi, calc_bollinger_bands, calc_macd
+try:
+    from tqdm import tqdm
+except ModuleNotFoundError:
+    def tqdm(iterable):
+        return iterable
+from IPython.display import display
+from src.calc_indicators import calc_sma_ema, calc_rsi, calc_bollinger_bands, calc_macd, _wilder_mean, _validate_period, _single_ticker
 
 # ============================================================
 #  HELPER FUNCTIES - OPTIMIZED + ENHANCED
@@ -20,6 +25,8 @@ def _safe_last_value(df: pd.DataFrame, col: str) -> float:
 
 def _calc_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     """Bereken ADX (Average Directional Index) voor trendsterkte."""
+    df = _single_ticker(df)
+    period = _validate_period(period)
     high = df['High']
     low = df['Low']
     close = df['Close']
@@ -28,7 +35,9 @@ def _calc_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     tr2 = abs(high - close.shift())
     tr3 = abs(low - close.shift())
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.rolling(period).mean()
+    if len(tr):
+        tr.iloc[0] = np.nan
+    atr = _wilder_mean(tr, period)
     
     up_move = high - high.shift()
     down_move = low.shift() - low
@@ -36,11 +45,16 @@ def _calc_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0)
     minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0)
     
-    plus_di = 100 * (pd.Series(plus_dm, index=df.index).rolling(period).mean() / atr)
-    minus_di = 100 * (pd.Series(minus_dm, index=df.index).rolling(period).mean() / atr)
+    plus_dm = pd.Series(plus_dm, index=df.index).mask(up_move.isna())
+    minus_dm = pd.Series(minus_dm, index=df.index).mask(down_move.isna())
+    plus_di = 100 * _wilder_mean(plus_dm, period) / atr.replace(0, np.nan)
+    minus_di = 100 * _wilder_mean(minus_dm, period) / atr.replace(0, np.nan)
+    plus_di = plus_di.mask(atr.eq(0), 0)
+    minus_di = minus_di.mask(atr.eq(0), 0)
     
-    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-    adx = dx.rolling(period).mean()
+    total = plus_di + minus_di
+    dx = (100 * abs(plus_di - minus_di) / total.replace(0, np.nan)).mask(total.eq(0), 0)
+    adx = _wilder_mean(dx, period)
     
     df['ADX'] = adx
     df['Plus_DI'] = plus_di
@@ -50,7 +64,7 @@ def _calc_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
 def _calc_volume_ma(df: pd.DataFrame, period: int = 20) -> pd.DataFrame:
     """Volume moving average + ratio."""
     df['Vol_MA'] = df['Volume'].rolling(period).mean()
-    df['Volume_Ratio'] = df['Volume'] / df['Vol_MA']
+    df['Volume_Ratio'] = df['Volume'] / df['Vol_MA'].replace(0, np.nan)
     return df
 
 def _get_market_regime(df: pd.DataFrame) -> str:
@@ -149,8 +163,17 @@ def _detect_divergences(df: pd.DataFrame, lookback: int = 30) -> Tuple[str, str]
     recent = df.iloc[-lookback:]
     bullish_div = bearish_div = ""
     
-    price_lows = recent['Low'].nsmallest(3)
-    price_highs = recent['High'].nlargest(3)
+    # Chronologische draaipunten, bevestigd door twee candles rechts.
+    # nsmallest/nlargest sorteerde op prijs en maakte de vergelijking onmogelijk.
+    low_positions, high_positions = [], []
+    for i in range(2, len(recent) - 2):
+        neighbours = [i-2, i-1, i+1, i+2]
+        if recent['Low'].iloc[i] < recent['Low'].iloc[neighbours].min():
+            low_positions.append(i)
+        if recent['High'].iloc[i] > recent['High'].iloc[neighbours].max():
+            high_positions.append(i)
+    price_lows = recent['Low'].iloc[low_positions]
+    price_highs = recent['High'].iloc[high_positions]
     
     # Bullish divergence
     if len(price_lows) >= 2:
@@ -257,7 +280,7 @@ def assess_trend_with_regime(df: pd.DataFrame, start_date: str) -> Tuple[str, pd
     df = df.sort_index()
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [col[0] for col in df.columns]
-    df = df[df.index >= pd.to_datetime(start_date)]
+    # Bewaar de historie voor de opwarming van indicatoren.
     if len(df) < 200:
         return "INSUFFICIENT_DATA", df
     
@@ -267,6 +290,7 @@ def assess_trend_with_regime(df: pd.DataFrame, start_date: str) -> Tuple[str, pd
     df = calc_bollinger_bands(df)
     df = _calc_volume_ma(df)
     df = _calc_adx(df)
+    df = df[df.index >= pd.to_datetime(start_date)]
     df = df.dropna(subset=['RSI', 'MACD', 'BB_Lower', 'Vol_MA', 'ADX'])
     
     if df.empty:
@@ -462,6 +486,7 @@ def scan_portfolio(tickers: list, start_date: str = '2025-01-01', min_data_days:
             
             results.append({"ticker": t.upper(), "price": price, **res})
         except Exception as e:
+            print(f'Fout bij {t}: {e}')
             continue
 
     if not results:

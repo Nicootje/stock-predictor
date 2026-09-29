@@ -1,18 +1,13 @@
 import matplotlib.pyplot as plt
 import pandas as pd
-from src.calc_indicators import calc_sma_ema, calc_rsi, calc_bollinger_bands, calc_macd
+from src.calc_indicators import calc_sma_ema, calc_rsi, calc_bollinger_bands, calc_macd, _single_ticker
 
 def plot_sma_ema_with_rsi(df, ticker, sma_ema_periods=[20, 50, 200], rsi_period=14, start_plot_date=None):
-    plot_df = df.copy()
+    plot_df = _single_ticker(df, ticker).copy()
 
-    # Calculate SMA/EMA if not present
-    for p in sma_ema_periods:
-        if f'SMA{p}' not in plot_df.columns or f'EMA{p}' not in plot_df.columns:
-            plot_df = calc_sma_ema(plot_df, sma_ema_periods)
-
-    # Calculate RSI if not present
-    if 'RSI' not in plot_df.columns:
-        plot_df = calc_rsi(plot_df, rsi_period)
+    # Bereken altijd met de parameters van deze aanroep.
+    plot_df = calc_sma_ema(plot_df, sma_ema_periods)
+    plot_df = calc_rsi(plot_df, rsi_period)
 
     # Filter by start_plot_date
     if start_plot_date:
@@ -52,9 +47,8 @@ def plot_sma_ema_with_rsi(df, ticker, sma_ema_periods=[20, 50, 200], rsi_period=
     plt.show()
 
 def plot_bollinger_bands(df, ticker, period=20, std_dev=2, start_plot_date=None):
-    plot_df = df.copy()
-    if 'BB_Middle' not in plot_df.columns:
-        plot_df = calc_bollinger_bands(plot_df, period, std_dev)
+    plot_df = _single_ticker(df, ticker).copy()
+    plot_df = calc_bollinger_bands(plot_df, period, std_dev)
     if start_plot_date:
         plot_df = plot_df[plot_df.index >= start_plot_date]
 
@@ -72,9 +66,8 @@ def plot_bollinger_bands(df, ticker, period=20, std_dev=2, start_plot_date=None)
 
 
 def plot_rsi(df, ticker, period=14, start_plot_date=None):
-    plot_df = df.copy()
-    if 'RSI' not in plot_df.columns:
-        plot_df = calc_rsi(plot_df, period)
+    plot_df = _single_ticker(df, ticker).copy()
+    plot_df = calc_rsi(plot_df, period)
     if start_plot_date:
         plot_df = plot_df[plot_df.index >= start_plot_date]
 
@@ -91,9 +84,8 @@ def plot_rsi(df, ticker, period=14, start_plot_date=None):
     plt.show()
 
 def plot_macd(df, ticker, fast=12, slow=26, signal=9, start_plot_date=None):
-    plot_df = df.copy()
-    if not {'MACD', 'Signal', 'Histogram'}.issubset(plot_df.columns):
-        plot_df = calc_macd(plot_df, fast, slow, signal)
+    plot_df = _single_ticker(df, ticker).copy()
+    plot_df = calc_macd(plot_df, fast, slow, signal)
     if start_plot_date:
         plot_df = plot_df[plot_df.index >= start_plot_date]
 
@@ -115,27 +107,13 @@ def plot_full_chart(df, ticker,
                     rsi_period=14,
                     macd_fast=12, macd_slow=26, macd_signal=9,
                     ):
-    plot_df = df.copy()
+    plot_df = _single_ticker(df, ticker).copy()
 
-    # --- Calculate indicators if not present ---
-    # SMA/EMA
-    for p in sma_ema_periods:
-        if sma and f'SMA{p}' not in plot_df.columns:
-            plot_df = calc_sma_ema(plot_df, sma_ema_periods)
-        if ema and f'EMA{p}' not in plot_df.columns:
-            plot_df = calc_sma_ema(plot_df, sma_ema_periods)
-    
-    # Bollinger Bands
-    if 'BB_Middle' not in plot_df.columns:
-        plot_df = calc_bollinger_bands(plot_df, bb_period, bb_std)
-
-    # RSI
-    if 'RSI' not in plot_df.columns:
-        plot_df = calc_rsi(plot_df, rsi_period)
-
-    # MACD
-    if not {'MACD', 'Signal', 'Histogram'}.issubset(plot_df.columns):
-        plot_df = calc_macd(plot_df, macd_fast, macd_slow, macd_signal)
+    # --- Bereken indicatoren voor de gevraagde instellingen ---
+    plot_df = calc_sma_ema(plot_df, sma_ema_periods)
+    plot_df = calc_bollinger_bands(plot_df, bb_period, bb_std)
+    plot_df = calc_rsi(plot_df, rsi_period)
+    plot_df = calc_macd(plot_df, macd_fast, macd_slow, macd_signal)
 
     # Filter by start_plot_date
     if start_plot_date:
@@ -199,15 +177,14 @@ def plot_full_chart(df, ticker,
     print(f"Plotted {ticker.upper()} with indicators: {', '.join(indicators)}")
 
 def plot_volume(df, ticker, period=20, start_plot_date=None):
-    plot_df = df.copy()
+    plot_df = _single_ticker(df, ticker).copy()
     
     # Flatten MultiIndex columns
     if isinstance(plot_df.columns, pd.MultiIndex):
         plot_df.columns = [col[0] for col in plot_df.columns]
 
     # Volume MA
-    if 'Vol_MA' not in plot_df.columns:
-        plot_df['Vol_MA'] = plot_df['Volume'].rolling(window=period).mean()
+    plot_df['Vol_MA'] = plot_df['Volume'].rolling(window=period).mean()
 
     # Filter by start_plot_date
     if start_plot_date:
@@ -232,15 +209,14 @@ def plot_volume(df, ticker, period=20, start_plot_date=None):
 def plot_stochastic(df, ticker, period=14, smooth_k=3, smooth_d=3, start_plot_date=None):
     from src.calc_indicators import calc_stochastic  # Importeer calc_stochastic
     
-    plot_df = df.copy()
+    plot_df = _single_ticker(df, ticker).copy()
     
     # Flatten MultiIndex columns
     if isinstance(plot_df.columns, pd.MultiIndex):
         plot_df.columns = [col[0] for col in plot_df.columns]
 
     # Calculate Stochastic if not present
-    if not {'%K', '%D'}.issubset(plot_df.columns):
-        plot_df = calc_stochastic(plot_df, period, smooth_k, smooth_d)
+    plot_df = calc_stochastic(plot_df, period, smooth_k, smooth_d)
 
     # Filter by start_plot_date
     if start_plot_date:
@@ -266,52 +242,6 @@ def plot_stochastic(df, ticker, period=14, smooth_k=3, smooth_d=3, start_plot_da
     plt.tight_layout()
     plt.show()
 
-def plot_fibonacci_levels(df, ticker, low_price=None, high_price=None, start_plot_date=None, auto_detect=False, lookback_period=60):
-    plot_df = df.copy()
-    
-    # Flatten MultiIndex columns
-    if isinstance(plot_df.columns, pd.MultiIndex):
-        plot_df.columns = [col[0] for col in plot_df.columns]
-
-    # Filter by start_plot_date
-    if start_plot_date:
-        start_plot_date = pd.to_datetime(start_plot_date)
-        plot_df = plot_df[plot_df.index >= start_plot_date]
-
-    if plot_df.empty:
-        print(f"No data to plot for {ticker} after {start_plot_date}")
-        return
-
-    # Automatische detectie van low en high als niet handmatig gespecificeerd
-    if auto_detect and (low_price is None or high_price is None):
-        lookback_df = plot_df.tail(lookback_period)  # Laatste 60 dagen
-        low_price = lookback_df['Close'].min()
-        high_price = lookback_df['Close'].max()
-
-    # Gebruik handmatige waarden als opgegeven
-    if low_price is None or high_price is None:
-        print("Please specify low_price and high_price or set auto_detect=True with a lookback_period.")
-        return
-
-    # Plot
-    fig, ax = plt.subplots(figsize=(14, 4))
-    ax.plot(plot_df.index, plot_df['Close'], label='Close', color='blue')
-
-    # Calculate Fibonacci levels
-    price_range = high_price - low_price
-    levels = [0, 23.6, 38.2, 50, 61.8, 100]
-    for level in levels:
-        price = high_price - (price_range * level / 100)
-        ax.axhline(y=price, color='gray', linestyle='--', alpha=0.5)
-        ax.text(plot_df.index[0], price, f'{level}%', va='center', ha='right', alpha=0.7)
-
-    ax.set_title(f"{ticker.upper()} — Fibonacci Levels (Low: {low_price}, High: {high_price})")
-    ax.set_ylabel("Price")
-    ax.grid(True, linestyle='--', alpha=0.3)
-    ax.legend()
-    plt.tight_layout()
-    plt.show()
-
 def plot_monthly_candles(
     df,
     ticker,
@@ -331,7 +261,7 @@ def plot_monthly_candles(
     from matplotlib.dates import DateFormatter, MonthLocator
     from matplotlib.ticker import MaxNLocator
 
-    plot_df = df.copy()
+    plot_df = _single_ticker(df, ticker).copy()
 
     # ----- 1. Clean yfinance MultiIndex ---------------------------------
     if isinstance(plot_df.columns, pd.MultiIndex):
@@ -341,13 +271,9 @@ def plot_monthly_candles(
             plot_df.columns = [col[0] for col in plot_df.columns]
     plot_df.columns = [c.capitalize() for c in plot_df.columns]
 
-    # ----- 2. Optional start-date filter --------------------------------
-    if start_plot_date:
-        start_plot_date = pd.to_datetime(start_plot_date)
-        plot_df = plot_df[plot_df.index >= start_plot_date]
-
+    # Bereken dagindicatoren eerst op de volledige historie.
     if plot_df.empty:
-        print(f"No data for {ticker} after {start_plot_date}")
+        print(f"No data for {ticker}")
         return
 
     # ----- 3. Indicators (calculated on **daily** data) -----------------
@@ -368,7 +294,15 @@ def plot_monthly_candles(
         if col in plot_df.columns:
             agg[col] = "last"
 
-    monthly = plot_df.resample("ME").agg(agg).dropna(how="any")
+    monthly = plot_df.resample("ME").agg(agg).dropna(subset=['Open', 'High', 'Low', 'Close'])
+    # Plaats de mogelijk onvoltooide laatste maand op de laatste waarneming.
+    monthly = monthly.rename(index={monthly.index[-1]: plot_df.index[-1]})
+    if start_plot_date:
+        plot_df = plot_df.loc[plot_df.index >= pd.Timestamp(start_plot_date)]
+        monthly = monthly.loc[monthly.index >= pd.Timestamp(start_plot_date)]
+    if plot_df.empty or monthly.empty:
+        print(f"No data for {ticker} after {start_plot_date}")
+        return
 
     # ----- 5. Plot -------------------------------------------------------
     fig, ax = plt.subplots(figsize=(13, 7))
@@ -406,6 +340,10 @@ def plot_monthly_candles(
         zorder=5,
     )
 
+    if use_sma:
+        ax.plot(monthly.index, monthly[f'SMA{sma_ema_period}'], color='green',
+                linewidth=2, label=f'SMA {sma_ema_period} (daily)')
+
     # ---- EMA 20 (crimson red) -----------------------------------------
     if use_ema and f"EMA{sma_ema_period}" in monthly.columns:
         ax.plot(
@@ -413,7 +351,7 @@ def plot_monthly_candles(
             monthly[f"EMA{sma_ema_period}"],
             color="#DC143C",          # crimson
             linewidth=2.5,
-            label=f"EMA {sma_ema_period}",
+            label=f"EMA {sma_ema_period} (daily)",
         )
 
     # ---- Bollinger Bands (purple band) --------------------------------
@@ -431,7 +369,7 @@ def plot_monthly_candles(
             monthly["BB_Lower"],
             color="#9467bd",
             alpha=0.25,
-            label="Bollinger (20,2)",
+            label=f"Bollinger ({bb_period},{bb_std}; daily)",
         )
 
     # ---- Styling (exactly like the screenshot) -----------------------
@@ -448,13 +386,16 @@ def plot_monthly_candles(
 
     # legend – top-left, same order as ProRealTime
     legend_elements = []
+    if use_sma:
+        legend_elements.append(plt.Line2D([0], [0], color='green', lw=2,
+                                         label=f'SMA {sma_ema_period} (daily)'))
     if use_ema:
         legend_elements.append(
-            plt.Line2D([0], [0], color="#DC143C", lw=2.5, label=f"EMA {sma_ema_period}")
+            plt.Line2D([0], [0], color="#DC143C", lw=2.5, label=f"EMA {sma_ema_period} (daily)")
         )
     if show_bollinger:
         legend_elements.append(
-            plt.Line2D([0], [0], color="#9467bd", lw=1.8, ls="--", label="Bollinger (20,2)")
+            plt.Line2D([0], [0], color="#9467bd", lw=1.8, ls="--", label=f"Bollinger ({bb_period},{bb_std}; daily)")
         )
     legend_elements.append(
         plt.Line2D([0], [0], color="#1f77b4", lw=1.6, label="Daily Close")

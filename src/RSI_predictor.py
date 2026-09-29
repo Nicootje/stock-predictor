@@ -2,7 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
 import pandas as pd
-from src.calc_indicators import calc_rsi
+from src.calc_indicators import calc_rsi, _single_ticker
+from numbers import Integral
+import warnings
 
 def plot_rsi_peaks(df, rsi_period, start_plot_date, ticker, 
                    mode='top', dof=1, future_days=30, 
@@ -22,12 +24,18 @@ def plot_rsi_peaks(df, rsi_period, start_plot_date, ticker,
     - plot_level: bool, True om horizontale RSI-lijn te tekenen
     """
 
-    # ---- Bereken RSI indien ontbreekt ----
-    if 'RSI' not in df.columns:
-        df['RSI'] = calc_rsi(df, rsi_period)['RSI']
+    if isinstance(dof, bool) or not isinstance(dof, Integral) or dof < 0:
+        raise ValueError("dof moet een niet-negatief geheel getal zijn.")
+    if not np.isfinite(future_days) or future_days < 0:
+        raise ValueError("future_days moet niet-negatief en eindig zijn.")
+    # ---- Bereken RSI voor deze aanroep, zonder de invoer te veranderen ----
+    df = calc_rsi(_single_ticker(df, ticker).copy(), rsi_period)
 
     # ---- Filter data ----
-    plot_df = df[df.index >= start_plot_date].copy()
+    plot_df = df if start_plot_date is None else df[df.index >= start_plot_date].copy()
+    plot_df = plot_df.dropna(subset=['RSI'])
+    if plot_df.empty:
+        raise ValueError("Geen berekenbare RSI in de gekozen periode.")
     rsi_values = plot_df['RSI'].values
     dates = plot_df.index
 
@@ -61,25 +69,31 @@ def plot_rsi_peaks(df, rsi_period, start_plot_date, ticker,
 
     # ---- Handmatig geselecteerde toppen/bodems ----
     if selected_peak_indices is not None and len(filtered_values) > 0:
-        selected_peak_indices = [i for i in selected_peak_indices if i < len(filtered_dates)]
+        valid_indices = [i for i in selected_peak_indices
+                         if isinstance(i, Integral) and not isinstance(i, bool) and 0 <= i < len(filtered_dates)]
+        if len(valid_indices) != len(selected_peak_indices):
+            warnings.warn(f"Niet alle gekozen pieken bestaan; geldige indices: 0 t/m {len(filtered_dates)-1}.",
+                          UserWarning, stacklevel=2)
+        selected_peak_indices = list(dict.fromkeys(valid_indices))
         selected_dates = filtered_dates[selected_peak_indices]
         selected_values = filtered_values[selected_peak_indices]
 
         # ---- Bereken horizontale lijnniveau (optioneel) ----
-        rsi_level = np.mean(selected_values) if plot_level else None
+        rsi_level = np.mean(selected_values) if plot_level and len(selected_values) else None
     else:
         selected_dates = np.array([])
         selected_values = np.array([])
         rsi_level = None
 
     # ---- Regressielijn ----
-    if len(selected_values) >= 2:
+    if len(selected_values) >= max(2, dof + 1):
         dates_num = np.array([(d - selected_dates[0]).days for d in selected_dates])
         coefs = np.polyfit(dates_num, selected_values, deg=dof)
         poly = np.poly1d(coefs)
 
         x_fit = np.linspace(dates_num[0], dates_num[-1] + future_days, 100)
         y_fit = poly(x_fit)
+        y_fit = np.where((y_fit >= 0) & (y_fit <= 100), y_fit, np.nan)
         fit_dates = [selected_dates[0] + pd.Timedelta(days=int(x)) for x in x_fit]
     else:
         fit_dates = np.array([])
@@ -108,6 +122,9 @@ def plot_rsi_peaks(df, rsi_period, start_plot_date, ticker,
     if len(fit_dates) > 0:
         plt.plot(fit_dates, y_fit, color='orange', linewidth=2, linestyle='--', 
                  label=f'Regressielijn (DOF={dof})')
+    else:
+        plt.gca().text(.01, .02, f'Geen fit: minstens {max(2, dof + 1)} geselecteerde punten nodig.',
+                       transform=plt.gca().transAxes, fontsize=9)
 
     plt.title(f"{ticker} — RSI ({rsi_period}) met {mode}pen en regressielijn", fontsize=14, fontweight='bold')
     plt.ylabel("RSI")

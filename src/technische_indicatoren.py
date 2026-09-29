@@ -1,19 +1,19 @@
+from src.calc_indicators import calc_sma_ema, calc_bollinger_bands, _single_ticker
+
+
 def technische_indicatoren(df, periods, ticker=None, bb_period=20, bb_std_dev=2):
     """
     Bereken en toon de laatste waarden van prijs, SMA, EMA en Bollinger Bands als nette tabel.
     """
-    df = df.copy()
+    df = _single_ticker(df, ticker).copy()
+    if df.empty:
+        raise ValueError("Geen koersdata ontvangen; controleer de downloadmelding.")
 
     # === SMA & EMA berekenen ===
-    for p in periods:
-        df[f'SMA{p}'] = df['Close'].rolling(window=p).mean()
-        df[f'EMA{p}'] = df['Close'].ewm(span=p, adjust=False).mean()
+    df = calc_sma_ema(df, periods)
 
     # === Bollinger Bands berekenen ===
-    df['BB_Middle'] = df['Close'].rolling(window=bb_period).mean()
-    df['BB_Std'] = df['Close'].rolling(window=bb_period).std()
-    df['BB_Upper'] = df['BB_Middle'] + (df['BB_Std'] * bb_std_dev)
-    df['BB_Lower'] = df['BB_Middle'] - (df['BB_Std'] * bb_std_dev)
+    df = calc_bollinger_bands(df, bb_period, bb_std_dev)
 
     # === Laatste rij en datum ===
     laatste_rij = df.iloc[[-1]]

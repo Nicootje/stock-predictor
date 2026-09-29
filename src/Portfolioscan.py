@@ -1,7 +1,12 @@
 import pandas as pd
 import yfinance as yf
 from typing import Dict, Any
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except ModuleNotFoundError:
+    def tqdm(iterable):
+        return iterable
+from IPython.display import display
 from src.calc_indicators import calc_sma_ema, calc_rsi, calc_bollinger_bands, calc_macd
 
 # ============================================================
@@ -214,7 +219,7 @@ def assess_trend(df: pd.DataFrame, start_date: str, periods=[20,50,200]) -> tupl
     df = df.sort_index()
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [col[0] for col in df.columns]
-    df = df[df.index >= pd.to_datetime(start_date)]
+    # Bewaar de historie voor de opwarming van indicatoren.
     if len(df) < 200:
         return "Onvoldoende data", df
     df = calc_sma_ema(df, periods)
@@ -222,8 +227,9 @@ def assess_trend(df: pd.DataFrame, start_date: str, periods=[20,50,200]) -> tupl
     df = calc_macd(df)
     df = calc_bollinger_bands(df)
     df = _calc_volume_ma(df)
+    df = df[df.index >= pd.to_datetime(start_date)]
     df = df.dropna(subset=['RSI', 'MACD', 'BB_Lower', 'Vol_MA'])
-    if df.empty:
+    if len(df) < 2:
         return "Geen data", df
     r, p = df.iloc[-1], df.iloc[-2]
     vol_up = r['Volume'] > r['Vol_MA'] * 1.5
@@ -245,6 +251,10 @@ def trend_bounce_score(df: pd.DataFrame, start_date: str = '2025-01-01',
                        vol_spike_mult: float = 3.0,
                        vol_high_mult: float = 1.5) -> Dict[str, Any]:
     trend, df_ind = assess_trend(df, start_date)
+    if trend in ('Onvoldoende data', 'Geen data'):
+        return dict(long_score=float('nan'), short_score=float('nan'),
+                    long_details=trend, short_details=trend,
+                    actie='GEEN DATA', momentum=trend)
     candles = _detect_candles(df_ind)
     bear_candles = _detect_bearish_candles(df_ind)
     r, p = df_ind.iloc[-1], df_ind.iloc[-2] if len(df_ind) > 1 else df_ind.iloc[-1]

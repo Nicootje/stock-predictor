@@ -1,4 +1,6 @@
-from src.calc_indicators import calc_sma_ema, calc_rsi, calc_bollinger_bands, calc_macd
+import numpy as np
+
+from src.calc_indicators import calc_sma_ema, calc_rsi, calc_bollinger_bands, calc_macd, _single_ticker
 
 def summary_technical_indicators(ticker,
                                  df,
@@ -13,7 +15,9 @@ def summary_technical_indicators(ticker,
     """
 
     # ---------- 1. Data ----------
-    close_df = df[['Close']].copy()
+    close_df = _single_ticker(df, ticker)[['Close']].copy()
+    if close_df.empty:
+        raise ValueError('Geen koersdata ontvangen; controleer de downloadmelding.')
 
     # ---------- 2. Indicatoren berekenen ----------
     close_df = calc_sma_ema(close_df, periods)
@@ -22,7 +26,9 @@ def summary_technical_indicators(ticker,
     close_df = calc_macd(close_df, fast=macd_fast, slow=macd_slow, signal=macd_signal)
 
     # ---------- 3. Filter voor de plot ----------
-    plot_df = close_df[close_df.index >= start_plot_date].copy()
+    plot_df = close_df if start_plot_date is None else close_df[close_df.index >= start_plot_date].copy()
+    if plot_df.empty:
+        return 'Geen data in de gekozen plotperiode.'
 
     # ---------- 4. Laatste waarden ----------
     last = close_df.iloc[-1]
@@ -39,7 +45,9 @@ def summary_technical_indicators(ticker,
 
     # ---------- 5. Analyse ----------
     # RSI
-    if rsi_val > 70:
+    if not np.isfinite(rsi_val):
+        rsi_status = 'Onvoldoende historie'
+    elif rsi_val > 70:
         rsi_status = "Overbought (mogelijk bearish, verkoopsignaal)"
     elif rsi_val < 30:
         rsi_status = "Oversold (mogelijk bullish, koopsignaal)"
@@ -47,7 +55,11 @@ def summary_technical_indicators(ticker,
         rsi_status = "Neutraal"
 
     # Bollinger Bands
-    if price >= bb_upper:
+    if not np.isfinite([bb_upper, bb_lower]).all():
+        bb_status = 'Onvoldoende historie'
+    elif bb_upper == bb_lower:
+        bb_status = 'Banden vallen samen (vlakke koers)'
+    elif price >= bb_upper:
         bb_status = "Boven bovenste band (mogelijk overbought, bearish)"
     elif price <= bb_lower:
         bb_status = "Onder onderste band (mogelijk oversold, bullish)"
@@ -59,7 +71,9 @@ def summary_technical_indicators(ticker,
         bb_status = "Rond middenband (neutraal, consolidatie)"
 
     # MACD
-    if macd > signal and histogram > 0:
+    if not np.isfinite([macd, signal, histogram]).all():
+        macd_status = 'Onvoldoende historie'
+    elif macd > signal and histogram > 0:
         macd_status = "Bullish (MACD boven signaallijn, koopsignaal)"
     elif macd < signal and histogram < 0:
         macd_status = "Bearish (MACD onder signaallijn, verkoopsignaal)"
@@ -73,9 +87,9 @@ def summary_technical_indicators(ticker,
     below_all_ema = all(price < last[f'EMA{p}'].item() for p in periods)
 
     cross = ""
-    if prev['SMA50'].item() <= prev['SMA200'].item() and last['SMA50'].item() > last['SMA200'].item():
+    if 50 in periods and 200 in periods and prev['SMA50'].item() <= prev['SMA200'].item() and last['SMA50'].item() > last['SMA200'].item():
         cross = "Golden Cross (sterk bullish, koopsignaal)"
-    elif prev['SMA50'].item() >= prev['SMA200'].item() and last['SMA50'].item() < last['SMA200'].item():
+    elif 50 in periods and 200 in periods and prev['SMA50'].item() >= prev['SMA200'].item() and last['SMA50'].item() < last['SMA200'].item():
         cross = "Death Cross (sterk bearish, verkoopsignaal)"
 
     if above_all_sma and above_all_ema:
@@ -88,6 +102,9 @@ def summary_technical_indicators(ticker,
         ma_status = "Bearish (koers onder meeste SMA/EMA)"
     else:
         ma_status = "Neutraal (koers tussen SMA/EMA)"
+
+    if not periods or any(not np.isfinite(last[f'{kind}{p}'].item()) for kind in ('SMA', 'EMA') for p in periods):
+        ma_status = 'Onvoldoende historie of geen perioden geselecteerd'
 
     if cross:
         ma_status += f", {cross}"
