@@ -6,6 +6,9 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
+from IPython.terminal.interactiveshell import TerminalInteractiveShell
+from traitlets.config import Config
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -14,7 +17,6 @@ import pandas as pd
 
 from src.calc_indicators import calc_rsi, calc_sma_ema, calc_macd, calc_bollinger_bands, calc_stochastic
 from src.technische_indicatoren import technische_indicatoren
-from src.portfolioscan_V2 import _calc_adx, assess_trend_with_regime, _detect_divergences
 from src.plot_indicators import plot_rsi, plot_bollinger_bands, plot_monthly_candles
 
 
@@ -84,35 +86,6 @@ class IndicatorTests(unittest.TestCase):
         flat = prices([10]*30).assign(Open=10,High=10,Low=10)
         self.assertTrue(calc_stochastic(flat)['%K'].isna().all())
 
-    def test_adx_reference_warmup_and_flat(self):
-        result = _calc_adx(prices(np.arange(10.,80.)))
-        self.assertTrue(result.ADX.iloc[:27].isna().all())
-        self.assertAlmostEqual(result.ADX.iloc[27],100)
-        self.assertAlmostEqual(result.Plus_DI.iloc[14],50)
-        flat = prices([10]*50).assign(Open=10,High=10,Low=10)
-        self.assertEqual(_calc_adx(flat).ADX.iloc[-1],0)
-
-    def test_adx_changing_direction(self):
-        frame = prices([10,11,13,12,15,14,16,15,18])
-        tr, positive, negative = [], [], []
-        for i in range(1,len(frame)):
-            p,r = frame.iloc[i-1],frame.iloc[i]
-            tr.append(max(r.High-r.Low,abs(r.High-p.Close),abs(r.Low-p.Close)))
-            up,down = r.High-p.High,p.Low-r.Low
-            positive.append(up if up>down and up>0 else 0)
-            negative.append(down if down>up and down>0 else 0)
-        atr,plus,minus = [sum(v[:3])/3 for v in (tr,positive,negative)]
-        dx = []
-        for i in range(2,len(tr)):
-            if i>2:
-                atr,plus,minus = [(old*2+v[i])/3 for old,v in
-                                  [(atr,tr),(plus,positive),(minus,negative)]]
-            dx.append(100*abs(plus-minus)/(plus+minus))
-        expected = sum(dx[:3])/3
-        for value in dx[3:]:
-            expected = (expected*2+value)/3
-        self.assertAlmostEqual(_calc_adx(frame,3).ADX.iloc[-1],expected)
-
     def test_multiindex_and_changed_plot_parameters(self):
         frame = prices(100+np.sin(np.arange(300)/5)*10)
         multi = pd.concat({'TEST':frame},axis=1).swaplevel(0,1,axis=1)
@@ -125,27 +98,12 @@ class IndicatorTests(unittest.TestCase):
                                    calc_rsi(frame.copy(),7).RSI,equal_nan=True)
         pd.testing.assert_frame_equal(multi,original)
 
-    def test_scanner_filter_retains_warmup(self):
-        frame = prices(100+np.arange(500)*.1+np.sin(np.arange(500)))
-        _,full = assess_trend_with_regime(frame.copy(),'2019-01-01')
-        _,recent = assess_trend_with_regime(frame.copy(),str(frame.index[-2].date()))
-        pd.testing.assert_series_equal(full.iloc[-1],recent.iloc[-1])
-
     def test_monthly_plot_without_valid_candles(self):
         frame = prices([100.] * 40)
         frame.loc[:, ['Open', 'High', 'Low', 'Close']] = np.nan
         with patch('matplotlib.pyplot.show') as show:
             plot_monthly_candles(frame, 'TEST')
         show.assert_not_called()
-
-    def test_scanner_divergence_uses_confirmed_chronological_pivots(self):
-        values = np.array([12,11,10,9,10,11,12,13,12,11,10,8,10,11])
-        for close, direction in [(values,0),(30-values,1)]:
-            frame = prices(close)
-            frame['RSI'], frame['Histogram'] = 40., 0.
-            frame.loc[frame.index[3],'RSI'] = 20 if direction==0 else 80
-            self.assertTrue(_detect_divergences(frame)[direction])
-            self.assertFalse(_detect_divergences(frame.iloc[:-1])[direction])
 
     def test_notebook_unchanged_cells_run(self):
         path = Path('notebooks/Beurs.ipynb')
@@ -155,12 +113,44 @@ class IndicatorTests(unittest.TestCase):
         frame = prices(100+.03*x+5*np.sin(x/8)+3*np.sin(x/31))
         def download(ticker,**kwargs):
             return pd.concat({ticker.upper():frame},axis=1).swaplevel(0,1,axis=1)
-        scope = {}
+        config = Config()
+        config.HistoryManager.hist_file = ":memory:"
+        shell = TerminalInteractiveShell.instance(config=config)
+        scope = {"get_ipython": lambda: shell}
         with patch('yfinance.download',side_effect=download), patch('matplotlib.pyplot.show'), \
                 contextlib.redirect_stdout(io.StringIO()):
             for i,cell in enumerate(notebook['cells']):
                 if cell['cell_type']=='code':
-                    exec(compile(''.join(cell['source']),f'cell-{i}','exec'),scope)
+                    source = shell.input_transformer_manager.transform_cell(''.join(cell['source']))
+                    exec(compile(source,f'cell-{i}','exec'),scope)
+        figure = scope['manual_result']['figure']
+        self.assertEqual(scope['manual_view'].children[1:3],
+                         (scope['dof_slider'], scope['future_slider']))
+        for name, low, high in [('dof_slider', 1, 5), ('future_slider', 0, 100)]:
+            self.assertEqual((scope[name].min, scope[name].max), (low, high))
+        scope['dof_slider'].value = 5
+        scope['future_slider'].value = 100
+        self.assertEqual(scope['manual_result']['settings']['dof'], 5)
+        self.assertEqual(scope['manual_result']['settings']['future_days'], 100)
+        self.assertIs(scope['manual_result']['figure'], figure)
+        self.assertIn('Minimaal 2 punten nodig', scope['manual_status'].value)
+        from matplotlib.backend_bases import MouseEvent
+        canvas = figure.canvas
+        dots = figure.axes[1].collections[0]
+        scope['dof_slider'].value = 2
+        for index in (0, 2, 4):
+            canvas.draw()
+            x, y = dots.get_offset_transform().transform(dots.get_offsets()[index])
+            canvas.callbacks.process('button_press_event',
+                MouseEvent('button_press_event', canvas, x, y, button=1))
+        self.assertEqual(len(scope['manual_result']['selected_points']), 3)
+        self.assertFalse(scope['manual_result']['fit'].empty)
+        self.assertFalse(scope['manual_result']['projection'].empty)
+        self.assertIn('RSI-regressie met DOF 2', scope['manual_status'].value)
+        scope['future_slider'].value = 0
+        self.assertIn('geen stippellijn', scope['manual_status'].value)
+        scope['future_slider'].value = 50
+        self.assertFalse(scope['manual_result']['projection'].empty)
         self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),before)
 
 

@@ -30,26 +30,25 @@ def _single_ticker(df, ticker=None):
 def _wilder_mean(series, period):
     """Eerste gemiddelde over n waarden; daarna Wilder's recursie. Gaten resetten."""
     period = _validate_period(period)
-    result = np.full(len(series), np.nan)
-    seed = []
-    average = np.nan
-    for i, value in enumerate(series.to_numpy(dtype=float)):
-        if not np.isfinite(value):
-            seed, average = [], np.nan
-        elif np.isnan(average):
-            seed.append(value)
-            if len(seed) == period:
-                average = float(np.mean(seed))
-                result[i] = average
-        else:
-            average = (average * (period - 1) + value) / period
-            result[i] = average
+    values = series.to_numpy(dtype=float)
+    result = np.full(len(values), np.nan)
+    # Each finite run has its own arithmetic seed; a gap restarts warm-up.
+    finite = np.isfinite(values)
+    edges = np.flatnonzero(np.diff(np.r_[False, finite, False]))
+    for start, stop in zip(edges[::2], edges[1::2]):
+        if stop - start < period:
+            continue
+        first = start + period - 1
+        seeded = values[first:stop].copy()
+        seeded[0] = values[start:first + 1].mean()
+        # pandas performs the recurrence in compiled code, not per candle in Python.
+        result[first:stop] = pd.Series(seeded).ewm(alpha=1 / period, adjust=False).mean().to_numpy()
     return pd.Series(result, index=series.index)
+
 
 def calc_sma_ema(df, periods):
     df = _single_ticker(df)
-    for p in periods:
-        p = _validate_period(p)
+    for p in dict.fromkeys(_validate_period(p) for p in periods):
         df[f'SMA{p}'] = df['Close'].rolling(window=p).mean()
         df[f'EMA{p}'] = df['Close'].ewm(span=p, adjust=False).mean()
     return df

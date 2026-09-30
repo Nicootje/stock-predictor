@@ -2,8 +2,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from src.calc_indicators import calc_sma_ema, calc_rsi, calc_bollinger_bands, calc_macd, _single_ticker
 
-def plot_sma_ema_with_rsi(df, ticker, sma_ema_periods=[20, 50, 200], rsi_period=14, start_plot_date=None):
+def plot_sma_ema_with_rsi(df, ticker, sma_ema_periods=(20, 50, 200), rsi_period=14, start_plot_date=None):
     plot_df = _single_ticker(df, ticker).copy()
+
+    sma_ema_periods = tuple(dict.fromkeys(sma_ema_periods))
 
     # Bereken altijd met de parameters van deze aanroep.
     plot_df = calc_sma_ema(plot_df, sma_ema_periods)
@@ -100,7 +102,7 @@ def plot_macd(df, ticker, fast=12, slow=26, signal=9, start_plot_date=None):
     plt.show()
 
 def plot_full_chart(df, ticker, 
-                    sma_ema_periods=[20, 50, 200], 
+                    sma_ema_periods=(20, 50, 200), 
                     start_plot_date= None,
                     sma=True, ema=True,
                     bb_period=20, bb_std=2,
@@ -109,8 +111,10 @@ def plot_full_chart(df, ticker,
                     ):
     plot_df = _single_ticker(df, ticker).copy()
 
+    sma_ema_periods = tuple(dict.fromkeys(sma_ema_periods))
     # --- Bereken indicatoren voor de gevraagde instellingen ---
-    plot_df = calc_sma_ema(plot_df, sma_ema_periods)
+    if sma or ema:
+        plot_df = calc_sma_ema(plot_df, sma_ema_periods)
     plot_df = calc_bollinger_bands(plot_df, bb_period, bb_std)
     plot_df = calc_rsi(plot_df, rsi_period)
     plot_df = calc_macd(plot_df, macd_fast, macd_slow, macd_signal)
@@ -178,10 +182,6 @@ def plot_full_chart(df, ticker,
 def plot_volume(df, ticker, period=20, start_plot_date=None):
     plot_df = _single_ticker(df, ticker).copy()
     
-    # Flatten MultiIndex columns
-    if isinstance(plot_df.columns, pd.MultiIndex):
-        plot_df.columns = [col[0] for col in plot_df.columns]
-
     # Volume MA
     plot_df['Vol_MA'] = plot_df['Volume'].rolling(window=period).mean()
 
@@ -210,10 +210,6 @@ def plot_stochastic(df, ticker, period=14, smooth_k=3, smooth_d=3, start_plot_da
     
     plot_df = _single_ticker(df, ticker).copy()
     
-    # Flatten MultiIndex columns
-    if isinstance(plot_df.columns, pd.MultiIndex):
-        plot_df.columns = [col[0] for col in plot_df.columns]
-
     # Calculate Stochastic if not present
     plot_df = calc_stochastic(plot_df, period, smooth_k, smooth_d)
 
@@ -262,12 +258,6 @@ def plot_monthly_candles(
 
     plot_df = _single_ticker(df, ticker).copy()
 
-    # ----- 1. Clean yfinance MultiIndex ---------------------------------
-    if isinstance(plot_df.columns, pd.MultiIndex):
-        if ticker in plot_df.columns.get_level_values(1):
-            plot_df = plot_df.xs(ticker, level=1, axis=1)
-        else:
-            plot_df.columns = [col[0] for col in plot_df.columns]
     plot_df.columns = [c.capitalize() for c in plot_df.columns]
 
     # Bereken dagindicatoren eerst op de volledige historie.
@@ -312,21 +302,18 @@ def plot_monthly_candles(
     # ---- candlestick colours (green = up, red = down) -----------------
     candle_up   = "#00FF00"   # lime-green
     candle_down = "#FF0000"   # red
-    colors = monthly.apply(
-        lambda r: candle_up if r["Close"] >= r["Open"] else candle_down, axis=1
-    )
-
-    # ---- draw monthly candles -----------------------------------------
-    for i, (date, row) in enumerate(monthly.iterrows()):
-        col = colors.iloc[i]
+    # Iterate scalar values directly; avoid constructing a Series for every candle.
+    for row in monthly.itertuples():
+        date = row.Index
+        col = candle_up if row.Close >= row.Open else candle_down
 
         # wicks
-        ax.plot([date, date], [row["Low"], row["High"]], color=col, linewidth=1.2)
+        ax.plot([date, date], [row.Low, row.High], color=col, linewidth=1.2)
 
         # body – thick, rounded caps (ProRealTime look)
         ax.plot(
             [date, date],
-            [row["Open"], row["Close"]],
+            [row.Open, row.Close],
             color=col,
             linewidth=7,
             solid_capstyle="round",
