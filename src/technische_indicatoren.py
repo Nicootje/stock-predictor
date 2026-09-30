@@ -5,6 +5,7 @@ def technische_indicatoren(df, periods, ticker=None, bb_period=20, bb_std_dev=2)
     """
     Bereken en toon de laatste waarden van prijs, SMA, EMA en Bollinger Bands als nette tabel.
     """
+    periods = tuple(dict.fromkeys(periods))
     df = _single_ticker(df, ticker).copy()
     if df.empty:
         raise ValueError("Geen koersdata ontvangen; controleer de downloadmelding.")

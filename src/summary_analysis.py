@@ -14,6 +14,8 @@ def summary_technical_indicators(ticker,
     Geeft een korte samenvatting en retourneert enkel de summary string.
     """
 
+    periods = tuple(dict.fromkeys(periods))
+
     # ---------- 1. Data ----------
     close_df = _single_ticker(df, ticker)[['Close']].copy()
     if close_df.empty:
@@ -26,8 +28,7 @@ def summary_technical_indicators(ticker,
     close_df = calc_macd(close_df, fast=macd_fast, slow=macd_slow, signal=macd_signal)
 
     # ---------- 3. Filter voor de plot ----------
-    plot_df = close_df if start_plot_date is None else close_df[close_df.index >= start_plot_date].copy()
-    if plot_df.empty:
+    if start_plot_date is not None and not (close_df.index >= start_plot_date).any():
         return 'Geen data in de gekozen plotperiode.'
 
     # ---------- 4. Laatste waarden ----------
